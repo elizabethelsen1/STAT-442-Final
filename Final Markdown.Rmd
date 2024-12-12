@@ -1,0 +1,775 @@
+---
+title: "Final Markdown"
+author: "Elizabeth Elsen"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+
+```{r setup, message = FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(dplyr)
+library(lubridate) # date and time
+library(tidyverse)
+library(ggplot2)
+library(corrplot) # correlation package
+library(clustMixType) # k proto clustering
+library(gridExtra) # for cluster histogram arrangement
+library(rcompanion) # CramerV test
+
+set.seed(123)  # For reproducibility
+
+
+load("cluster_df_clean_region.RData") # has all clusters loaded already
+load("cor_matrix.RData")
+load("universal_top_spotify_songs.RData")
+load("cluster_df_clean.RData")
+
+```
+
+### Originally importing the data.
+
+```{r data setup, eval = FALSE}
+
+universal_top_spotify_songs <- read_csv("universal_top_spotify_songs.csv", 
+                                        col_types = cols(snapshot_date = col_datetime(format = "%Y-%m-%d"), 
+                                                         album_release_date = col_datetime(format = "%Y-%m-%d"), 
+                                                         key = col_factor(levels = c("0", 
+                                                                                     "1", "2", "3", "4", "5", "6", 
+                                                                                     "7", "8", "9", "10", "11")), 
+                                                         mode = col_factor(levels = c("0", 
+                                                                                      "1")), time_signature = col_factor(levels = c("0", 
+                                                                                                                                    "1", "2", "3", "4", "5"))))
+
+
+# adding columns 
+universal_top_spotify_songs <- universal_top_spotify_songs %>%
+  mutate(key_mode = paste(key, "in", mode),
+         age = difftime(universal_top_spotify_songs$snapshot_date, 
+                        universal_top_spotify_songs$album_release_date, 
+                        units = "days") 
+         )
+
+
+# getting only the date with peak popularity
+universal_top_spotify_songs <- universal_top_spotify_songs %>%
+  group_by(spotify_id) %>%
+  filter(popularity == max(popularity)) %>%
+  ungroup()
+
+
+overall_df <- universal_top_spotify_songs %>%
+  filter(is.na(country))
+
+
+# creating country lists
+
+latin_american <- c("MX", "SV", "GT", "HN", "NI", "CR", "PA", "DO", "VE", "CO", "EC", "PE", "BO", "CL", "AR", "PY", "UY")
+
+portuguese_speaking <- c("BR", "PT")
+
+east_asian <- c("JP", "KR", "TW", "VN", "HK")
+
+southeast_asian <- c("TH", "PH", "MY", "ID", "SG")
+
+south_central_asian <- c("IN", "PK", "KZ")
+
+middle_eastern <- c("SA", "AE", "IL", "EG")
+
+nordic_scandinavian <- c("SE", "NO", "DK", "FI", "IS")
+
+western_european <- c("FR", "ES", "IT", "DE", "NL", "BE", "LU", "CH", "AT")
+
+eastern_european <- c("UA", "RO", "PL", "HU", "CZ", "SK", "EE", "LV", "LT", "BG", "BY")
+
+african <- c("ZA", "NG", "MA")
+
+anglo_western <- c("US", "CA", "GB", "IE", "AU", "NZ")
+
+
+
+universal_top_spotify_songs$region <- case_when(
+  universal_top_spotify_songs$country %in% latin_american ~ "Latin American",
+  universal_top_spotify_songs$country %in% portuguese_speaking ~ "Portuguese-Speaking",
+  universal_top_spotify_songs$country %in% east_asian ~ "East Asian",
+  universal_top_spotify_songs$country %in% southeast_asian ~ "Southeast Asian",
+  universal_top_spotify_songs$country %in% south_central_asian ~ "South-Central Asian",
+  universal_top_spotify_songs$country %in% middle_eastern ~ "Middle Eastern",
+  universal_top_spotify_songs$country %in% nordic_scandinavian ~ "Nordic/Scandinavian",
+  universal_top_spotify_songs$country %in% western_european ~ "Western European",
+  universal_top_spotify_songs$country %in% eastern_european ~ "Eastern European",
+  universal_top_spotify_songs$country %in% african ~ "African",
+  universal_top_spotify_songs$country %in% anglo_western ~ "Anglo-Western",
+  TRUE ~ "Overall" # Fallback category for any unmatched countries
+)
+
+
+
+# filtering data frames for each group
+
+latin_american_df <- universal_top_spotify_songs %>%
+  filter(country %in% latin_american)
+
+portuguese_speaking_df <- universal_top_spotify_songs %>%
+  filter(country %in% portuguese_speaking)
+
+east_asian_df <- universal_top_spotify_songs %>%
+  filter(country %in% east_asian)
+
+southeast_asian_df <- universal_top_spotify_songs %>%
+  filter(country %in% southeast_asian)
+
+south_central_asian_df <- universal_top_spotify_songs %>%
+  filter(country %in% south_central_asian)
+
+middle_eastern_df <- universal_top_spotify_songs %>%
+  filter(country %in% middle_eastern)
+
+nordic_scandinavian_df <- universal_top_spotify_songs %>%
+  filter(country %in% nordic_scandinavian)
+
+western_european_df <- universal_top_spotify_songs %>%
+  filter(country %in% western_european)
+
+eastern_european_df <- universal_top_spotify_songs %>%
+  filter(country %in% eastern_european)
+
+african_df <- universal_top_spotify_songs %>%
+  filter(country %in% african)
+
+anglo_western_df <- universal_top_spotify_songs %>%
+  filter(country %in% anglo_western)
+
+
+
+# summary creation by mode or whichever variable
+
+calculate_averages_by_diff <- function(data, group_var = "mode") {
+  data %>%
+    group_by(across(all_of(group_var))) %>%
+    summarise(
+      number_in_section = n_distinct(spotify_id),
+      avg_age = mean(age, na.rm = TRUE),
+      avg_danceability = mean(danceability, na.rm = TRUE),
+      avg_explicit = mean(as.numeric(is_explicit), na.rm = TRUE),
+      avg_duration = mean(duration_ms, na.rm = TRUE),
+      avg_energy = mean(energy, na.rm = TRUE),
+      avg_loudness = mean(loudness, na.rm = TRUE),
+      avg_speechiness = mean(speechiness, na.rm = TRUE),
+      avg_acousticness = mean(acousticness, na.rm = TRUE),
+      avg_instrumentalness = mean(instrumentalness, na.rm = TRUE),
+      avg_liveness = mean(liveness, na.rm = TRUE),
+      avg_valence = mean(valence, na.rm = TRUE),
+      avg_tempo = mean(tempo, na.rm = TRUE),
+
+      median_age = median(age, na.rm = TRUE),
+      median_danceability = median(danceability, na.rm = TRUE),
+      median_explicit = median(as.numeric(is_explicit), na.rm = TRUE),
+      median_duration = median(duration_ms, na.rm = TRUE),
+      median_energy = median(energy, na.rm = TRUE),
+      median_loudness = median(loudness, na.rm = TRUE),
+      median_speechiness = median(speechiness, na.rm = TRUE),
+      median_acousticness = median(acousticness, na.rm = TRUE),
+      median_instrumentalness = median(instrumentalness, na.rm = TRUE),
+      median_liveness = median(liveness, na.rm = TRUE),
+      median_valence = median(valence, na.rm = TRUE),
+      median_tempo = median(tempo, na.rm = TRUE)
+    )
+}
+
+
+
+# overall averages
+
+calculate_averages <- function(data) {
+  data %>%
+    summarise(
+      number_in_section = n_distinct(spotify_id),
+      avg_age = mean(age, na.rm = TRUE),
+      avg_danceability = mean(danceability, na.rm = TRUE),
+      avg_explicit = mean(as.numeric(is_explicit), na.rm = TRUE),
+      avg_duration = mean(duration_ms, na.rm = TRUE),
+      avg_energy = mean(energy, na.rm = TRUE),
+      avg_loudness = mean(loudness, na.rm = TRUE),
+      avg_speechiness = mean(speechiness, na.rm = TRUE),
+      avg_acousticness = mean(acousticness, na.rm = TRUE),
+      avg_instrumentalness = mean(instrumentalness, na.rm = TRUE),
+      avg_liveness = mean(liveness, na.rm = TRUE),
+      avg_valence = mean(valence, na.rm = TRUE),
+      avg_tempo = mean(tempo, na.rm = TRUE),
+      
+      median_age = median(age, na.rm = TRUE),
+      median_danceability = median(danceability, na.rm = TRUE),
+      median_explicit = median(as.numeric(is_explicit), na.rm = TRUE),
+      median_duration = median(duration_ms, na.rm = TRUE),
+      median_energy = median(energy, na.rm = TRUE),
+      median_loudness = median(loudness, na.rm = TRUE),
+      median_speechiness = median(speechiness, na.rm = TRUE),
+      median_acousticness = median(acousticness, na.rm = TRUE),
+      median_instrumentalness = median(instrumentalness, na.rm = TRUE),
+      median_liveness = median(liveness, na.rm = TRUE),
+      median_valence = median(valence, na.rm = TRUE),
+      median_tempo = median(tempo, na.rm = TRUE)
+    )
+}
+
+# using the function
+
+overall_averages <- calculate_averages(overall_df)
+
+latin_american_averages <- calculate_averages(latin_american_df)
+
+portuguese_speaking_averages <- calculate_averages(portuguese_speaking_df)
+
+east_asian_averages <- calculate_averages(east_asian_df)
+
+southeast_asian_averages <- calculate_averages(southeast_asian_df)
+
+south_central_asian_averages <- calculate_averages(south_central_asian_df)
+
+middle_eastern_averages <- calculate_averages(middle_eastern_df)
+
+nordic_scandinavian_averages <- calculate_averages(nordic_scandinavian_df)
+
+western_european_averages <- calculate_averages(western_european_df)
+
+eastern_european_averages <- calculate_averages(eastern_european_df)
+
+african_averages <- calculate_averages(african_df)
+
+anglo_western_averages <- calculate_averages(anglo_western_df)
+
+overall_averages$place <- "Overall"
+
+latin_american_averages$place <- "Latin American"
+
+portuguese_speaking_averages$place <- "Portuguese Speaking"
+
+east_asian_averages$place <- "East Asian"
+
+southeast_asian_averages$place <- "Southeast Asian"
+
+south_central_asian_averages$place <- "South Centeral Asian"
+
+middle_eastern_averages$place <- "Middle Eastern"
+
+nordic_scandinavian_averages$place <- "Nordic Scandinavian"
+
+western_european_averages$place <- "Western European"
+
+eastern_european_averages$place <- "Eastern European"
+
+african_averages$place <- "African"
+
+anglo_western_averages$place <- "Anglo Western"
+
+
+all_averages <- rbind(overall_averages,latin_american_averages,portuguese_speaking_averages,
+                      east_asian_averages,southeast_asian_averages, south_central_asian_averages,
+                      middle_eastern_averages,nordic_scandinavian_averages,western_european_averages,
+                      eastern_european_averages,african_averages,anglo_western_averages)
+
+
+
+rm(overall_averages,latin_american_averages,portuguese_speaking_averages,
+   east_asian_averages,southeast_asian_averages, south_central_asian_averages,
+   middle_eastern_averages,nordic_scandinavian_averages,western_european_averages,
+   eastern_european_averages,african_averages,anglo_western_averages)
+
+
+
+#seasons
+#####
+
+# making seperate dfs by season of year
+winter <- c("December","January","Febuary")
+spring <- c("March","April","May")
+summer <- c("June","July","August")
+fall <- c("September","October","November")
+
+
+# should divine it up by years:
+
+df2023 <- universal_top_spotify_songs %>%
+  filter(year(snapshot_date) == 2023)
+
+df2024 <- universal_top_spotify_songs %>%
+  filter(year(snapshot_date) == 2024)
+
+
+winter_df_2023 <- df2023 %>%
+  filter(months(snapshot_date) %in% winter)
+
+# anything before fall 2023 is not included
+
+fall_df_2023 <- df2023 %>%
+  filter(months(snapshot_date) %in% fall)
+
+winter_df_2024 <- df2024 %>%
+  filter(months(snapshot_date) %in% winter)
+
+
+spring_df_2024 <- df2024 %>%
+  filter(months(snapshot_date) %in% spring)
+
+
+summer_df_2024 <- df2024 %>%
+  filter(months(snapshot_date) %in% summer)
+
+
+fall_df_2024 <- df2024 %>%
+  filter(months(snapshot_date) %in% fall)
+
+
+
+winter_averages_2023 <- calculate_averages(winter_df_2023)
+
+# spring_averages_2023 <- calculate_averages(spring_df_2023)
+# 
+# summer_averages_2023 <- calculate_averages(summer_df_2023)
+
+fall_averages_2023 <- calculate_averages(fall_df_2023)
+
+
+winter_averages_2024 <- calculate_averages(winter_df_2024)
+
+spring_averages_2024 <- calculate_averages(spring_df_2024)
+
+summer_averages_2024 <- calculate_averages(summer_df_2024)
+
+fall_averages_2024 <- calculate_averages(fall_df_2024)
+
+
+
+fall_averages_2024$time <- "fall 24"
+winter_averages_2024$time <- "winter 24"
+summer_averages_2024$time <- "summer 24"
+spring_averages_2024$time <- "spring 24"
+
+fall_averages_2023$time <- "fall 23"
+winter_averages_2023$time <- "winter 23"
+# summer_averages_2023$time <- "summer 23"
+# spring_averages_2023$time <- "spring 23"
+
+
+
+
+
+all_averages_seasons <- rbind(fall_averages_2024,summer_averages_2024,
+                              spring_averages_2024,fall_averages_2023,
+                              winter_averages_2023, winter_averages_2024)
+
+
+
+
+
+
+
+```
+
+
+## EDA Shiny App
+### Explores Distribution of Categorical and Numerical Variables over Mode and Region
+### Explores Averages around the world and over time.
+```{r EDA app include}
+knitr::include_app("https://elizabethelsen80.shinyapps.io/Final_EDA/", height = "700px")
+```
+
+### Note the numerical distributions are not normal.
+####~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+## Checking Correlations
+### Pearson's Correlation test can deal with abnormal data if the sample size is large enough.
+### 280K datapoints is sufficient
+
+```{r correlation prep, eval = FALSE}
+
+cluster_df_clean_cov <- cluster_df_clean%>%
+  na.omit() %>%
+  select( -is_explicit, -key, -mode, -time_signature, -spotify_id, -region)
+
+
+cov_matrix <- cov(cluster_df_clean_cov)
+
+# Convert the covariance matrix to a correlation matrix
+cor_matrix <- cov2cor(cov_matrix)
+
+```
+
+```{r correlation stuff, fig.height=7}
+
+# Plot the correlation matrix using corrplot
+corrplot(cor_matrix, method = "color", type = "upper", 
+         col = colorRampPalette(c("blue", "white", "red"))(200), 
+         tl.col = "black", tl.srt = 45)
+
+universal_top_spotify_songs_section <- universal_top_spotify_songs[sample(nrow
+                                                                          (universal_top_spotify_songs)
+                                                                          , size = 1000),]
+
+contingency_table <- table(universal_top_spotify_songs_section$mode, universal_top_spotify_songs_section$key)
+chisq.test(contingency_table)
+
+cramerV <- cramerV(contingency_table, bias.correct = TRUE)
+print(cramerV)
+
+contingency_table <- table(universal_top_spotify_songs_section$mode, universal_top_spotify_songs_section$is_explicit)
+chisq.test(contingency_table)
+
+cramerV <- cramerV(contingency_table, bias.correct = TRUE)
+print(cramerV)
+
+contingency_table <- table(universal_top_spotify_songs_section$is_explicit, universal_top_spotify_songs_section$key)
+chisq.test(contingency_table)
+
+cramerV <- cramerV(contingency_table, bias.correct = TRUE)
+print(cramerV)
+
+contingency_table <- table(universal_top_spotify_songs_section$mode,
+                           as.factor(universal_top_spotify_songs_section$region))
+chisq.test(contingency_table)
+
+cramerV <- cramerV(contingency_table, bias.correct = TRUE)
+print(cramerV)
+
+contingency_table <- table(universal_top_spotify_songs_section$key,
+                           as.factor(universal_top_spotify_songs_section$region))
+chisq.test(contingency_table)
+
+cramerV <- cramerV(contingency_table, bias.correct = TRUE)
+print(cramerV)
+
+contingency_table <- table(universal_top_spotify_songs_section$is_explicit,
+                           as.factor(universal_top_spotify_songs_section$region))
+chisq.test(contingency_table)
+
+cramerV <- cramerV(contingency_table, bias.correct = TRUE)
+print(cramerV)
+
+```
+### There were no significant correlations with the numerical variables. 
+### Unlike with the numerical calculations which benefit from a higher sample size, I took a sample for the chi^2 test because it is sensitive to large data sets.
+#### The Cramer V test says if the results of the Chi^2 test were effected by sample size. We want values below 0.3 for moderately low effect. 
+#### I belive that the sample size affected the extremely low p value for the first test.
+### Mode and region were highly related to the other categorical variables, but key and explicit lyrics were not related to each other. Thus I will remove mode and region, and keep the other categorical variables.
+
+
+``` {r making clusters dataset, eval = FALSE}
+
+
+cluster_df_region <- universal_top_spotify_songs %>%
+  subset(select = c(-name, -artists, -daily_rank, -daily_movement, -weekly_movement,
+                    -snapshot_date, -album_name, -album_release_date, -country,
+                    -key_mode
+                    ))
+
+
+cluster_df_clean_region <- na.omit(cluster_df_region)# Remove rows with NA
+
+cluster_df_clean <- cluster_df_clean_region %>%
+  select(-region, -mode)
+
+
+
+# Standardize numeric variables (if needed)
+cluster_df_clean_scaled <- cluster_df_clean_cov %>%
+  mutate(across(where(is.numeric), scale)) 
+
+
+
+```
+
+
+
+```{r Clusters kproto elbow, eval = FALSE}
+set.seed(123)  # For reproducibility
+# Function to compute within-cluster sum of squares (wss) for k-prototypes
+elbow_method <- function(data, max_k = 10) {
+  wss <- numeric(max_k)
+  for (k in 1:max_k) {
+    model <- kproto(data, k)
+    wss[k] <- model$tot.withinss  # Total within-cluster sum of squares
+  }
+  return(wss)
+}
+
+# Compute wss values
+kproto_wss <- elbow_method(cluster_df_clean, max_k = 6)
+
+
+```
+
+### An obvious elbow apears at 2 clusters.
+
+```{r clusters proto elbow plot}
+load("kproto_wss.RData")
+
+# Plot the elbow method
+plot(1:6, kproto_wss, type = "b", pch = 19, frame = FALSE, 
+     xlab = "Number of Clusters", ylab = "Total Within-Cluster Sum of Squares",
+     main = "Elbow Method for K-Prototypes")
+
+```
+
+
+
+```{r Clusters kproto, eval = FALSE}
+# Perform k-prototype clustering
+
+types_vector <- c(rep('n', 12), rep('c', 4))
+
+
+kproto_result <- kproto(cluster_df_clean, k = 2, types = types_vector)
+
+cluster_df_clean_region$cluster_kproto <- as.factor(kproto_result$cluster)
+
+
+
+```
+
+
+
+
+### K Means cannot deal with categorical variables, so they are removed. 
+
+
+```{r Clusters kmeans elbow}
+
+cluster_df_clean_cov <- cluster_df_clean %>%
+  select(-spotify_id, -is_explicit, -key, -time_signature)
+
+
+# Standardize numeric variables (if needed)
+cluster_df_clean_scaled <- cluster_df_clean_cov %>%
+  mutate(across(where(is.numeric), scale)) 
+
+set.seed(123)  # For reproducibility
+
+sampled_data <- cluster_df_clean_scaled[sample(nrow(cluster_df_clean_scaled), size = 0.1 * nrow(cluster_df_clean_scaled)), ]
+
+
+
+wss <- function(k) {
+  kmeans(sampled_data, centers = k, nstart = 10, iter.max = 100)$tot.withinss
+}
+
+# Apply WSS for a range of cluster numbers
+k_values <- 1:7
+
+wss_values <- sapply(k_values, wss)
+
+# Plot the Elbow Method
+plot(k_values, wss_values, type = "b", pch = 19, frame = FALSE,
+     xlab = "Number of clusters (k)", ylab = "Total within-cluster sum of squares")
+
+
+```
+
+
+### There are small elbows at 2, 4, 6; we will look into these three options.
+
+
+
+
+
+```{r kmeans setup, eval = FALSE}
+cluster_df_clean_cov <- cluster_df_clean %>%
+  select(-spotify_id, -is_explicit, -key, -time_signature)
+
+
+# Standardize numeric variables (if needed)
+cluster_df_clean_scaled <- cluster_df_clean_cov %>%
+  mutate(across(where(is.numeric), scale)) 
+
+sampled_data <- cluster_df_clean_scaled[sample(nrow(cluster_df_clean_scaled), size = 0.1 * nrow(cluster_df_clean_scaled)), ]
+
+
+```
+
+
+```{r cluster kmeans2, eval = FALSE}
+
+k <- 2  # Replace with the chosen number of clusters
+kmeans_result <- kmeans(cluster_df_clean_scaled, centers = k, nstart = 25)
+
+# Add cluster assignments to the dataframe
+cluster_df_clean_region$cluster_kmeans2 <- as.factor(kmeans_result$cluster)
+
+```
+
+```{r cluster kmeans4, eval = FALSE}
+k <- 4  # Replace with the chosen number of clusters
+kmeans_result <- kmeans(cluster_df_clean_scaled, centers = k, nstart = 25)
+
+# Add cluster assignments to the dataframe
+cluster_df_clean$cluster_kmeans4 <- as.factor(kmeans_result$cluster)
+
+```
+
+```{r cluster kmeans6, eval = FALSE}
+
+# Perform K-means clustering
+k <- 6  # Replace with the chosen number of clusters
+kmeans_result <- kmeans(cluster_df_clean_scaled, centers = k, nstart = 25)
+
+# Add cluster assignments to the dataframe
+cluster_df_clean$cluster_kmeans6 <- as.factor(kmeans_result$cluster)
+
+
+```
+
+
+
+```{r cluster amounts}
+
+p1 <- ggplot(cluster_df_clean_region, aes(x = cluster_kproto, fill = cluster_kproto)) +
+  geom_bar( color = "black", show.legend = FALSE) +
+  scale_fill_viridis_d() +
+  labs(title = "K Prototype", x = "cluster_kproto", y = "Count") +
+  theme_minimal()
+
+p2 <- ggplot(cluster_df_clean_region, aes(x = cluster_kmeans2, fill = cluster_kmeans2)) +
+  geom_bar( color = "black", show.legend = FALSE) +
+  scale_fill_viridis_d() +
+  labs(title = "Kmeans 2 Clusters", x = "cluster_kmeans2", y = "Count") +
+  theme_minimal()
+
+p3 <- ggplot(cluster_df_clean_region, aes(x = cluster_kmeans4, fill = cluster_kmeans4)) +
+  geom_bar( color = "black", show.legend = FALSE) +
+  scale_fill_viridis_d() +
+  labs(title = "Kmeans 4 Clusters", x = "cluster_kmeans4", y = "Count") +
+  theme_minimal()
+
+p4 <- ggplot(cluster_df_clean_region, aes(x = cluster_kmeans6, fill = cluster_kmeans6)) +
+  geom_bar( color = "black", show.legend = FALSE) +
+  scale_fill_viridis_d() +
+  labs(title = "Kmeans 6 Clusters", x = "cluster_kmeans6", y = "Count") +
+  theme_minimal()
+
+# Arrange the plots in a 2x2 grid
+
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+
+
+
+```
+
+
+
+```{r Cluster app include}
+knitr::include_app("https://elizabethelsen80.shinyapps.io/Final_Cluster_Eval/", height = "800px")
+```
+
+## Cluster Analysis
+
+### K Prototype:
+#### 1) long duration songs
+#### 2) short songs
+
+### K Means 2 Clusters :
+#### 1) Younger, Short, loud, speechy happy songs that are generally better to dance to.
+#### 2) Older, longer, less speechy, more somber songs
+
+
+### K Means 4 Clusters:
+#### 1) high speechiness probably rap, meme songs, musical music, or TikTok trends
+#### 2) High Instrumental probably study songs
+#### 3) longer duration, acoustic, lower energy, lower happiness, subdued songs
+#### 4) Happy dance songs (high valence, high energy, high danceability
+
+
+### K Means 6 Clusters:
+#### 1) Live Recordings
+#### 2) Older songs
+#### 3) High Speechiness, so probably rap, meme songs, musical music, or TikTok trends
+#### 4) Insturmental Music
+#### 5) More general happy loud dance songs
+#### 6) Sad acoustic songs
+
+
+
+
+
+```{r Regions and Clusters}
+
+
+cluster_df_clean_region_test <- cluster_df_clean_region[sample(nrow
+                                                                          (cluster_df_clean_region)
+                                                                          , size = 1000),]
+
+
+contingency_table <- table(cluster_df_clean_region_test$cluster_kproto, cluster_df_clean_region_test$region)
+chi2_result <- chisq.test(contingency_table)
+print(chi2_result)
+
+
+cramerV <- cramerV(contingency_table, bias.correct = TRUE)
+print(cramerV)
+
+contingency_table <- table(cluster_df_clean_region_test$cluster_kmeans2, cluster_df_clean_region_test$region)
+chi2_result <- chisq.test(contingency_table)
+print(chi2_result)
+
+
+cramerV <- cramerV(contingency_table, bias.correct = TRUE)
+print(cramerV)
+
+contingency_table <- table(cluster_df_clean_region_test$cluster_kmeans4, cluster_df_clean_region_test$region)
+chi2_result <- chisq.test(contingency_table)
+print(chi2_result)
+
+
+cramerV <- cramerV(contingency_table, bias.correct = TRUE)
+print(cramerV)
+
+contingency_table <- table(cluster_df_clean_region_test$cluster_kmeans6, cluster_df_clean_region_test$region)
+chi2_result <- chisq.test(contingency_table)
+print(chi2_result)
+
+
+cramerV <- cramerV(contingency_table, bias.correct = TRUE)
+print(cramerV)
+
+
+
+```
+
+##### Low P values indicate a relationship between the region and the proportion of each cluster within it.
+##### Cramer V says that the sample size has a low to moderately low effect on the Chi-Squared test.
+
+###### ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+#### K Prototype: 
+##### In Most Regions songs under 4 minutes dominate the charts.
+##### Anglo-Western, East Asian, Middle Eastern, and South-Central Asian countries have charts nearly even short and long songs. Southeast Asian countries Have more long songs on the charts than short songs
+
+
+#### K Means 2 Clusters: 
+##### Short, loud, happy songs are more popular in most countries. 
+##### The two clusters are about even in Aftican, Anglo-Western, East Asian, Middle Eastern, and South-Central Asian countries.
+#### Somber songs are more popular in Southeast Asian countries. 
+
+
+
+
+#### K Means 4 Clusters: 
+
+##### In Latin American countries there are many more happy dance songs than other songs on the charts.
+##### In African countries' charts there are about equal proportions of trendy, somber, and dance songs.
+##### Anglo-Western and East Asian countries have very similar demographics.
+##### In Southeast Asian countries' charts there are more somber songs on the charts than dance songs. There are very few trend songs and insturmental songs in their charts.
+
+
+
+#### K Means 6 Clusters: 
+
+##### Older songs make up the highest proportion of the charts in Anglo-Western countries.
+##### Live Recordings were most popular on the Portuguese-speaking countries' charts.
+##### Songs with high proportions of spoken words are most popular on African and Portuguese-speaking countries' charts.
+##### Instrumental songs are rare on all of the charts.
+##### Dance songs are most popular in Latin American countries' charts, and least popular in South Central Asian and African countries' Charts.
+##### Once again Somber Acoustic songs are most popular on Southeast Asian countries' charts and least popular in Latin American and Portuguese countries' charts.
+
